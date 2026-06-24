@@ -75,6 +75,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
             var lastTwoFingerDistance = 0f
             var lastTwoFingerMidY = 0f
             var sawTwoFingers = false
+            var rightEdgeLongPressFired = false
 
             // Bottom-right corner could match both zones; prioritize bottom (horizontal)
             // since it's the more specific/intentional gesture in that overlap.
@@ -128,6 +129,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
                     if (pointerCount == 1) {
                         lastSingle = pressed.first().position
                     } else if (pointerCount == 2) {
+                        sawTwoFingers = true
                         val (a, b) = pressed.take(2)
                         twoFingerStart = a.position
                         lastTwoFingerDistance = hypot(a.position.x - b.position.x, a.position.y - b.position.y)
@@ -145,7 +147,15 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
 
                     when (edgeZone) {
                         EdgeZone.RIGHT_VSCROLL -> {
-                            if (delta.y != 0f) {
+                            val heldLongEnough =
+                                System.currentTimeMillis() - downTime > GestureTuning.LONG_PRESS_MS
+                            val movedEnough = totalMovement > GestureTuning.TAP_MAX_MOVEMENT_PX
+
+                            if (!rightEdgeLongPressFired && heldLongEnough && !movedEnough) {
+                                rightEdgeLongPressFired = true
+                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                connection.send(Protocol.clickRight())
+                            } else if (delta.y != 0f && movedEnough) {
                                 connection.send(Protocol.scroll(-delta.y * GestureTuning.SCROLL_SENSITIVITY))
                             }
                         }

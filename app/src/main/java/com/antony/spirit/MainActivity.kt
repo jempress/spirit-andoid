@@ -5,15 +5,25 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
+
+// Brand palette pulled from the app icon — dark navy background, glowing light-blue accent.
+private val SpiritNavy = Color(0xFF0E1A2E)
+private val SpiritNavyDeep = Color(0xFF081120)
+private val SpiritAccent = Color(0xFF7EC8E3)
 
 class MainActivity : ComponentActivity() {
 
@@ -21,16 +31,33 @@ class MainActivity : ComponentActivity() {
     private lateinit var connection: SpiritConnection
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        discovery = DiscoveryClient(lifecycleScope)
+        // The splash screen API dismisses as soon as the first frame is drawn, which
+        // with Compose can happen almost instantly — too fast to actually register as
+        // a splash. Holding it on screen for a fixed minimum duration makes the brand
+        // moment actually visible instead of flashing past unnoticed.
+        var minDurationElapsed = false
+        splashScreen.setKeepOnScreenCondition { !minDurationElapsed }
+        lifecycleScope.launchWhenCreated {
+            delay(600)
+            minDurationElapsed = true
+        }
+
+        discovery = DiscoveryClient(lifecycleScope, applicationContext)
         connection = SpiritConnection(lifecycleScope)
         discovery.start()
 
         setContent {
-            MaterialTheme {
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = SpiritAccent,
+                    background = SpiritNavy,
+                    surface = SpiritNavy
+                )
+            ) {
                 SpiritApp(discovery, connection)
             }
         }
@@ -70,7 +97,7 @@ fun SpiritApp(discovery: DiscoveryClient, connection: SpiritConnection) {
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 8.dp),
-                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.35f),
+                color = Color.White.copy(alpha = 0.35f),
                 style = MaterialTheme.typography.labelSmall
             )
         }
@@ -92,7 +119,7 @@ fun SpiritApp(discovery: DiscoveryClient, connection: SpiritConnection) {
 
 @Composable
 private fun CornerMarkers() {
-    val color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.25f)
+    val color = Color.White.copy(alpha = 0.25f)
     val size = 18.dp
     val thickness = 2.dp
 
@@ -131,43 +158,83 @@ private fun ConnectScreen(
     onManualIpChange: (String) -> Unit,
     onConnectClicked: () -> Unit
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    colors = listOf(SpiritNavy, SpiritNavyDeep)
+                )
+            )
     ) {
-        Text("Spirit", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(16.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.spirit_splash_icon),
+                contentDescription = "Spirit logo",
+                modifier = Modifier.size(96.dp)
+            )
+            Spacer(Modifier.height(20.dp))
 
-        val statusText = when (state) {
-            ConnectionState.DISCONNECTED -> if (discovered != null)
-                "Found PC at ${discovered.ip} — tap Connect" else "Searching for PC on WiFi..."
-            ConnectionState.CONNECTING -> "Connecting..."
-            ConnectionState.FAILED -> "Connection failed — check PC is running and on same network"
-            ConnectionState.CONNECTED -> "" // handled by caller, unreachable here
-        }
-        Text(statusText, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(24.dp))
-
-        if (discovered == null) {
-            OutlinedTextField(
-                value = manualIp,
-                onValueChange = onManualIpChange,
-                label = { Text("PC IP address (manual fallback)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+            Text(
+                "Spirit",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold
             )
             Spacer(Modifier.height(12.dp))
-        }
 
-        Button(
-            onClick = onConnectClicked,
-            enabled = state != ConnectionState.CONNECTING,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Connect")
+            val statusText = when (state) {
+                ConnectionState.DISCONNECTED -> if (discovered != null)
+                    "Found PC at ${discovered.ip}" else "Searching for PC on WiFi..."
+                ConnectionState.CONNECTING -> "Connecting..."
+                ConnectionState.FAILED -> "Connection failed — check PC is running and on the same network"
+                ConnectionState.CONNECTED -> "" // handled by caller, unreachable here
+            }
+            Text(
+                statusText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = SpiritAccent.copy(alpha = 0.85f)
+            )
+            Spacer(Modifier.height(28.dp))
+
+            if (discovered == null) {
+                OutlinedTextField(
+                    value = manualIp,
+                    onValueChange = onManualIpChange,
+                    label = { Text("PC IP address (manual fallback)") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = SpiritAccent,
+                        unfocusedBorderColor = SpiritAccent.copy(alpha = 0.4f),
+                        focusedLabelColor = SpiritAccent,
+                        unfocusedLabelColor = Color.White.copy(alpha = 0.6f),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+
+            Button(
+                onClick = onConnectClicked,
+                enabled = state != ConnectionState.CONNECTING,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SpiritAccent,
+                    contentColor = SpiritNavyDeep
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Text("Connect", fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }
