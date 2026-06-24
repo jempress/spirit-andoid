@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Spirit" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <style name="Theme.Spirit.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/spirit_navy</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/spirit_splash_icon</item>
+        <item name="postSplashScreenTheme">@style/Theme.Spirit</item>
+    </style>
+</resources>

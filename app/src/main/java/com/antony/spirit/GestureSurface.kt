@@ -66,6 +66,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
             // --- Wait for the first finger down, starting a new gesture session ---
             val firstDown = awaitFirstDown(requireUnconsumed = false)
             var pointerCount = 1
+            var prevPointerCount = 0   // 0 = "no frame processed yet", forces first real frame to re-baseline
             var lastSingle = firstDown.position
             val downTime = System.currentTimeMillis()
             var totalMovement = 0f
@@ -114,6 +115,26 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
                         // threshold into a drag — already sent as MOVE deltas, nothing more to do.
                     }
                     break
+                }
+
+                // Re-baseline on any pointer-count change (finger added or removed)
+                // instead of computing a delta this frame — comparing positions across
+                // a transition compares different fingers' coordinates and produces a
+                // large bogus jump. This is the root cause of both the cursor-jump and
+                // the unreliable two-finger right-click (bogus movement broke the tap
+                // threshold check).
+                if (pointerCount != prevPointerCount) {
+                    prevPointerCount = pointerCount
+                    if (pointerCount == 1) {
+                        lastSingle = pressed.first().position
+                    } else if (pointerCount == 2) {
+                        val (a, b) = pressed.take(2)
+                        twoFingerStart = a.position
+                        lastTwoFingerDistance = hypot(a.position.x - b.position.x, a.position.y - b.position.y)
+                        lastTwoFingerMidY = (a.position.y + b.position.y) / 2f
+                    }
+                    event.changes.forEach { it.consume() }
+                    continue
                 }
 
                 if (pointerCount == 1) {
