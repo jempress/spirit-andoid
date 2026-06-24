@@ -120,6 +120,9 @@ private fun CornerMarkers() {
             }
     }
 }
+
+@Composable
+private fun ConnectScreen(
     discovered: DiscoveredPc?,
     state: ConnectionState,
     manualIp: String,
