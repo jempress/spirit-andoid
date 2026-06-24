@@ -13,6 +13,7 @@ object Protocol {
     fun dragMove(dx: Float, dy: Float) = "DRAG_MOVE %.2f %.2f".format(dx, dy)
     fun dragEnd() = "DRAG_END"
     fun scroll(dy: Float) = "SCROLL %.2f".format(dy)
+    fun hscroll(dx: Float) = "HSCROLL %.2f".format(dx)
     fun zoom(delta: Float) = "ZOOM %.2f".format(delta)
     fun ping() = "PING"
 }

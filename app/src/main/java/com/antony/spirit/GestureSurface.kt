@@ -7,9 +7,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
@@ -24,10 +24,14 @@ private object GestureTuning {
     const val MOVE_SENSITIVITY = 1.6f       // multiplier on raw touch delta -> cursor px
     const val SCROLL_SENSITIVITY = 0.5f
     const val ZOOM_SENSITIVITY = 0.05f       // pinch distance delta -> wheel notches
+    const val ZOOM_THRESHOLD_PX = 0.6f       // min per-frame distance change to count as pinch (was too high before, causing slow pinches to be misread as scroll)
     const val TAP_MAX_DURATION_MS = 200L
     const val TAP_MAX_MOVEMENT_PX = 12f
     const val LONG_PRESS_MS = 350L
+    const val EDGE_ZONE_FRACTION = 0.08f     // last 8% of width/height counts as an edge-scroll zone
 }
+
+private enum class EdgeZone { NONE, RIGHT_VSCROLL, BOTTOM_HSCROLL }
 
 /**
  * Full-surface touchpad. One finger = move/tap/drag, two fingers = scroll/zoom/right-click,
@@ -35,12 +39,13 @@ private object GestureTuning {
  */
 @Composable
 fun GestureSurface(connection: SpiritConnection, modifier: Modifier = Modifier) {
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     androidx.compose.foundation.Canvas(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF1A1A1A))
             .pointerInput(Unit) {
-                awaitEachGesture(connection)
+                awaitEachGesture(connection, haptics)
             }
     ) {
         // Intentionally blank — this is a touch surface, not a visual canvas.
@@ -53,7 +58,8 @@ fun GestureSurface(connection: SpiritConnection, modifier: Modifier = Modifier) 
  * finger down to all fingers up), using Compose's low-level pointer input API.
  */
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEachGesture(
-    connection: SpiritConnection
+    connection: SpiritConnection,
+    haptics: androidx.compose.ui.hapticfeedback.HapticFeedback
 ) {
     while (true) {
         awaitPointerEventScope {
@@ -68,6 +74,16 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
             var lastTwoFingerDistance = 0f
             var lastTwoFingerMidY = 0f
             var sawTwoFingers = false
+
+            // Bottom-right corner could match both zones; prioritize bottom (horizontal)
+            // since it's the more specific/intentional gesture in that overlap.
+            val edgeZone = when {
+                firstDown.position.y > size.height * (1f - GestureTuning.EDGE_ZONE_FRACTION) ->
+                    EdgeZone.BOTTOM_HSCROLL
+                firstDown.position.x > size.width * (1f - GestureTuning.EDGE_ZONE_FRACTION) ->
+                    EdgeZone.RIGHT_VSCROLL
+                else -> EdgeZone.NONE
+            }
 
             while (true) {
                 val event = awaitPointerEvent(PointerEventPass.Main)
@@ -84,11 +100,14 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
                             if (duration < GestureTuning.TAP_MAX_DURATION_MS &&
                                 totalMovement < GestureTuning.TAP_MAX_MOVEMENT_PX
                             ) {
+                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                 connection.send(Protocol.clickRight())
                             }
                         }
                         duration < GestureTuning.TAP_MAX_DURATION_MS &&
-                            totalMovement < GestureTuning.TAP_MAX_MOVEMENT_PX -> {
+                            totalMovement < GestureTuning.TAP_MAX_MOVEMENT_PX &&
+                            edgeZone == EdgeZone.NONE -> {
+                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                             connection.send(Protocol.clickLeft())
                         }
                         // else: a slow single-finger move that never crossed the long-press
@@ -98,29 +117,43 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
                 }
 
                 if (pointerCount == 1) {
-                    sawTwoFingers = sawTwoFingers // no-op, just keeping branch explicit
                     val p = pressed.first()
                     val delta = p.position - lastSingle
                     lastSingle = p.position
                     totalMovement += hypot(delta.x, delta.y)
 
-                    val heldLongEnough =
-                        System.currentTimeMillis() - downTime > GestureTuning.LONG_PRESS_MS
-                    val movedEnough = totalMovement > GestureTuning.TAP_MAX_MOVEMENT_PX
+                    when (edgeZone) {
+                        EdgeZone.RIGHT_VSCROLL -> {
+                            if (delta.y != 0f) {
+                                connection.send(Protocol.scroll(-delta.y * GestureTuning.SCROLL_SENSITIVITY))
+                            }
+                        }
+                        EdgeZone.BOTTOM_HSCROLL -> {
+                            if (delta.x != 0f) {
+                                connection.send(Protocol.hscroll(delta.x * GestureTuning.SCROLL_SENSITIVITY))
+                            }
+                        }
+                        EdgeZone.NONE -> {
+                            val heldLongEnough =
+                                System.currentTimeMillis() - downTime > GestureTuning.LONG_PRESS_MS
+                            val movedEnough = totalMovement > GestureTuning.TAP_MAX_MOVEMENT_PX
 
-                    if (!isDragging && heldLongEnough && !movedEnough) {
-                        // Held still past the long-press threshold -> start a drag.
-                        isDragging = true
-                        connection.send(Protocol.dragStart())
-                    }
+                            if (!isDragging && heldLongEnough && !movedEnough) {
+                                // Held still past the long-press threshold -> start a drag.
+                                isDragging = true
+                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                connection.send(Protocol.dragStart())
+                            }
 
-                    if (delta.x != 0f || delta.y != 0f) {
-                        val dx = delta.x * GestureTuning.MOVE_SENSITIVITY
-                        val dy = delta.y * GestureTuning.MOVE_SENSITIVITY
-                        if (isDragging) {
-                            connection.send(Protocol.dragMove(dx, dy))
-                        } else {
-                            connection.send(Protocol.move(dx, dy))
+                            if (delta.x != 0f || delta.y != 0f) {
+                                val dx = delta.x * GestureTuning.MOVE_SENSITIVITY
+                                val dy = delta.y * GestureTuning.MOVE_SENSITIVITY
+                                if (isDragging) {
+                                    connection.send(Protocol.dragMove(dx, dy))
+                                } else {
+                                    connection.send(Protocol.move(dx, dy))
+                                }
+                            }
                         }
                     }
                 } else if (pointerCount == 2) {
@@ -138,9 +171,12 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
                         val distDelta = dist - lastTwoFingerDistance
                         val midYDelta = midY - lastTwoFingerMidY
 
-                        // Pinch dominates if the spread is changing meaningfully faster
-                        // than the pair is translating together; otherwise treat as scroll.
-                        if (abs(distDelta) > abs(midYDelta) && abs(distDelta) > 2f) {
+                        // Pinch is "distance between fingers changing"; scroll is "pair
+                        // translating together with distance roughly constant." Comparing
+                        // distDelta against the threshold first (rather than against midYDelta)
+                        // makes slow, deliberate pinches register reliably instead of losing
+                        // to scroll on noisy per-frame comparisons.
+                        if (abs(distDelta) > GestureTuning.ZOOM_THRESHOLD_PX) {
                             connection.send(Protocol.zoom(distDelta * GestureTuning.ZOOM_SENSITIVITY))
                         } else if (abs(midYDelta) > 1f) {
                             connection.send(Protocol.scroll(-midYDelta * GestureTuning.SCROLL_SENSITIVITY))

@@ -3,7 +3,9 @@ package com.antony.spirit
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +21,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
 
         discovery = DiscoveryClient(lifecycleScope)
         connection = SpiritConnection(lifecycleScope)
@@ -59,12 +62,13 @@ fun SpiritApp(discovery: DiscoveryClient, connection: SpiritConnection) {
         // Full-screen trackpad once connected — this is the actual product surface.
         Box(modifier = Modifier.fillMaxSize()) {
             GestureSurface(connection, modifier = Modifier.fillMaxSize())
+            CornerMarkers()
             Text(
                 text = "Spirit connected",
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 24.dp),
-                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.4f),
+                    .padding(top = 8.dp),
+                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.35f),
                 style = MaterialTheme.typography.labelSmall
             )
         }
@@ -85,7 +89,37 @@ fun SpiritApp(discovery: DiscoveryClient, connection: SpiritConnection) {
 }
 
 @Composable
-private fun ConnectScreen(
+private fun CornerMarkers() {
+    val color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.25f)
+    val size = 18.dp
+    val thickness = 2.dp
+
+    // Four corners, each a small L-bracket. Purely decorative/orientational —
+    // no pointerInput here, so touches pass through to the GestureSurface beneath.
+    Box(Modifier.fillMaxSize()) {
+        listOf(Alignment.TopStart, Alignment.TopEnd, Alignment.BottomStart, Alignment.BottomEnd)
+            .forEach { corner ->
+                Box(
+                    modifier = Modifier
+                        .align(corner)
+                        .padding(12.dp)
+                        .size(size)
+                ) {
+                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                        val strokePx = thickness.toPx()
+                        val len = this.size.minDimension
+                        // Two short perpendicular lines forming an L, oriented per corner.
+                        val isTop = corner == Alignment.TopStart || corner == Alignment.TopEnd
+                        val isStart = corner == Alignment.TopStart || corner == Alignment.BottomStart
+                        val yEdge = if (isTop) 0f else this.size.height
+                        val xEdge = if (isStart) 0f else this.size.width
+                        drawLine(color, Offset(xEdge, yEdge), Offset(xEdge, yEdge + (if (isTop) len else -len)), strokePx)
+                        drawLine(color, Offset(xEdge, yEdge), Offset(xEdge + (if (isStart) len else -len), yEdge), strokePx)
+                    }
+                }
+            }
+    }
+}
     discovered: DiscoveredPc?,
     state: ConnectionState,
     manualIp: String,
