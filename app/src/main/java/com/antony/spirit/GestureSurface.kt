@@ -29,10 +29,9 @@ private object GestureTuning {
     const val TAP_MAX_MOVEMENT_PX = 12f
     const val LONG_PRESS_MS = 350L
     const val EDGE_ZONE_FRACTION = 0.08f     // last 8% of width/height counts as an edge-scroll zone
-    const val CORNER_ZONE_FRACTION = 0.16f   // bottom-right corner is a larger dedicated zone, like a laptop touchpad's right-click corner
 }
 
-private enum class EdgeZone { NONE, RIGHT_VSCROLL, BOTTOM_HSCROLL, CORNER_RIGHT_CLICK }
+private enum class EdgeZone { NONE, RIGHT_VSCROLL, BOTTOM_HSCROLL }
 
 /**
  * Full-surface touchpad. One finger = move/tap/drag, two fingers = scroll/zoom/right-click,
@@ -76,14 +75,10 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
             var lastTwoFingerDistance = 0f
             var lastTwoFingerMidY = 0f
             var sawTwoFingers = false
-            var rightEdgeLongPressFired = false
 
-            // Corner takes priority over the edges, since it's a dedicated zone — a
-            // touch starting there is never meant to scroll, only right-click.
+            // Bottom-right corner could match both edge zones; prioritize bottom
+            // (horizontal) since it's the more specific/intentional gesture there.
             val edgeZone = when {
-                firstDown.position.x > size.width * (1f - GestureTuning.CORNER_ZONE_FRACTION) &&
-                    firstDown.position.y > size.height * (1f - GestureTuning.CORNER_ZONE_FRACTION) ->
-                    EdgeZone.CORNER_RIGHT_CLICK
                 firstDown.position.y > size.height * (1f - GestureTuning.EDGE_ZONE_FRACTION) ->
                     EdgeZone.BOTTOM_HSCROLL
                 firstDown.position.x > size.width * (1f - GestureTuning.EDGE_ZONE_FRACTION) ->
@@ -150,24 +145,6 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.awaitEac
                     totalMovement += hypot(delta.x, delta.y)
 
                     when (edgeZone) {
-                        EdgeZone.CORNER_RIGHT_CLICK -> {
-                            val heldLongEnough =
-                                System.currentTimeMillis() - downTime > GestureTuning.LONG_PRESS_MS
-                            val movedEnough = totalMovement > GestureTuning.TAP_MAX_MOVEMENT_PX
-
-                            if (!rightEdgeLongPressFired && heldLongEnough && !movedEnough) {
-                                rightEdgeLongPressFired = true
-                                try {
-                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                } catch (e: Exception) {
-                                    // Some OEM ROMs throw on certain haptic constants — never
-                                    // let a vibration failure take down the whole gesture loop.
-                                }
-                                connection.send(Protocol.clickRight())
-                            }
-                            // Deliberately no move/scroll in this zone — it's a dedicated
-                            // click corner, like a laptop touchpad's right-click area.
-                        }
                         EdgeZone.RIGHT_VSCROLL -> {
                             if (delta.y != 0f) {
                                 connection.send(Protocol.scroll(-delta.y * GestureTuning.SCROLL_SENSITIVITY))

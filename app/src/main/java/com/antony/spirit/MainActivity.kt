@@ -76,6 +76,18 @@ fun SpiritApp(discovery: DiscoveryClient, connection: SpiritConnection) {
     val connState by connection.state.collectAsState()
     var manualIp by remember { mutableStateOf("") }
     var autoConnectAttempted by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    // Connect screen reads naturally in portrait; the trackpad surface is wider-than-tall
+    // like a real touchpad, so it switches to landscape only once actually connected.
+    LaunchedEffect(connState) {
+        val activity = context as? ComponentActivity
+        activity?.requestedOrientation = if (connState == ConnectionState.CONNECTED) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
 
     // Auto-connect the moment we discover a PC, but only once per discovery
     // (avoids re-triggering connect() on every beacon if already connected/connecting).
@@ -112,6 +124,12 @@ fun SpiritApp(discovery: DiscoveryClient, connection: SpiritConnection) {
                     DiscoveredPc(it, 6824)
                 }
                 target?.let { connection.connect(it.ip, it.tcpPort) }
+            },
+            onUsbConnectClicked = {
+                // Requires `adb reverse tcp:6824 tcp:6824` run once on the PC with the
+                // phone plugged in — that tunnels the phone's localhost:6824 through to
+                // the PC's localhost:6824 where Spirit's TCP server is listening.
+                connection.connect("127.0.0.1", 6824)
             }
         )
     }
@@ -156,7 +174,8 @@ private fun ConnectScreen(
     state: ConnectionState,
     manualIp: String,
     onManualIpChange: (String) -> Unit,
-    onConnectClicked: () -> Unit
+    onConnectClicked: () -> Unit,
+    onUsbConnectClicked: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -235,6 +254,30 @@ private fun ConnectScreen(
             ) {
                 Text("Connect", fontWeight = FontWeight.SemiBold)
             }
+
+            Spacer(Modifier.height(24.dp))
+            Text(
+                "— or —",
+                color = Color.White.copy(alpha = 0.3f),
+                style = MaterialTheme.typography.labelSmall
+            )
+            Spacer(Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = onUsbConnectClicked,
+                enabled = state != ConnectionState.CONNECTING,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = SpiritAccent),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Connect via USB")
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Run \"adb reverse tcp:6824 tcp:6824\" once on the PC with the phone plugged in, then tap above.",
+                color = Color.White.copy(alpha = 0.35f),
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 }
